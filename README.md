@@ -2,6 +2,31 @@
 
 Lightweight Windows 10/11 x64 desktop companion for Civitai, built with Tauri 2, Rust and vanilla TypeScript.
 
+## What it does
+
+Civitai Companion keeps the parts of your Civitai account you check most often in a small desktop window, without requiring an open browser tab.
+
+- Shows your account avatar, username, blue/yellow/green Buzz balances and new followers found today.
+- Synchronizes Civitai notifications on a configurable interval or immediately through **Sync now**.
+- Groups notifications into dedicated filters for comments and thread replies, followers, reactions, Buzz tips, model updates, collection/submission/bounty updates and miscellaneous events.
+- Displays safe thumbnail previews for related images and videos when the Civitai API provides the required media data.
+- Opens profiles, notifications, images, videos and other Civitai destinations on `civitai.red` in your default browser.
+- Sends short-lived Windows notifications for new activity. Multiple simultaneous events are combined into a single notification count instead of producing misleading individual toasts.
+- Supports configurable event sounds, sound previews, unread counters and mark-as-read actions.
+- Provides an on-demand Buzz transaction ledger for blue, yellow and green Buzz, including received/spent entries and linked image previews where available.
+- Runs from the Windows system tray: closing the window can keep synchronization active, while the tray menu offers **Show**, **Sync now** and **Quit**.
+- Optionally starts with Windows; autostart is disabled by default.
+- Includes account connection testing, a permission inspector, preference backup/import, cache reset and complete local-account-data removal.
+
+All polling, authenticated API access, notification decisions and persistent state are owned by the Rust backend. The interface never receives the API key.
+
+## Getting started
+
+1. Download either the installer or portable executable from [GitHub Releases](https://github.com/Tar-Tarj/Civitai-companion/releases).
+2. Open **Settings → Account & Security**.
+3. Select **Configure API key** and enter a Civitai API key with the permissions required for the features you want to use.
+4. Run the connection test, then use **Sync now** or wait for the configured polling interval.
+
 ## Downloads
 
 Version 1.0.23 is provided in three forms:
