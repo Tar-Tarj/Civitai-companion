@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-preferences"
+description = "Enables the export_preferences command without any pre-configured scope."
+commands.allow = ["export_preferences"]
+
+[[permission]]
+identifier = "deny-export-preferences"
+description = "Denies the export_preferences command without any pre-configured scope."
+commands.deny = ["export_preferences"]

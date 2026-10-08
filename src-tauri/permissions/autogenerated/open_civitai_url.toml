@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-open-civitai-url"
+description = "Enables the open_civitai_url command without any pre-configured scope."
+commands.allow = ["open_civitai_url"]
+
+[[permission]]
+identifier = "deny-open-civitai-url"
+description = "Denies the open_civitai_url command without any pre-configured scope."
+commands.deny = ["open_civitai_url"]

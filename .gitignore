@@ -1,0 +1,26 @@
+# Dependencies and generated builds
+node_modules/
+dist/
+src-tauri/target/
+coverage/
+
+# Local development secrets and state
+.env
+.env.*
+!.env.example
+*.pfx
+*.p12
+*.pem
+*.key
+
+# Local release staging
+/INSTALLER/
+/PORTABLE/
+/release-assets/
+
+# Editor and operating-system files
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db

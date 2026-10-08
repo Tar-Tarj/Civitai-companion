@@ -1,0 +1,24 @@
+{
+  "name": "civitai-companion-desktop",
+  "version": "1.0.23",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "test": "node --test --test-isolation=none tests/*.test.mjs",
+    "tauri": "tauri",
+    "desktop:dev": "tauri dev",
+    "desktop:build": "tauri build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2",
+    "vite": "8.3.0"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-capability",
+  "description": "The main local window may invoke the application's explicit command set and subscribe to state changes.",
+  "local": true,
+  "windows": ["main"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-minimize",
+    "core:window:allow-close",
+    "allow-get-snapshot",
+    "allow-configure-api-key",
+    "allow-remove-api-key",
+    "allow-test-connection",
+    "allow-sync-now",
+    "allow-update-settings",
+    "allow-mark-notification-read",
+    "allow-mark-all-notifications-read",
+    "allow-get-buzz-transactions",
+    "allow-preview-sound",
+    "allow-fetch-civitai-image",
+    "allow-open-civitai-url",
+    "allow-export-preferences",
+    "allow-import-preferences",
+    "allow-reset-cached-data",
+    "allow-clear-account-data"
+  ]
+}

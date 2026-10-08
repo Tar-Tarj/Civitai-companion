@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reset-cached-data"
+description = "Enables the reset_cached_data command without any pre-configured scope."
+commands.allow = ["reset_cached_data"]
+
+[[permission]]
+identifier = "deny-reset-cached-data"
+description = "Denies the reset_cached_data command without any pre-configured scope."
+commands.deny = ["reset_cached_data"]

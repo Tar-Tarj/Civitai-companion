@@ -1,0 +1,41 @@
+[package]
+name = "civitai-companion-desktop"
+version = "1.0.23"
+description = "A private, local Windows companion for Civitai"
+authors = ["Civitai Companion"]
+edition = "2024"
+rust-version = "1.88"
+
+[lib]
+name = "civitai_companion_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.6.3", features = [] }
+
+[dependencies]
+atomic-write-file = "=0.3.1"
+base64 = "=0.22.1"
+chrono = { version = "0.4", features = ["serde"] }
+keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "=2.11.5", features = ["tray-icon"] }
+tauri-plugin-autostart = "=2.5.1"
+tauri-plugin-notification = "=2.4.0"
+tauri-plugin-opener = "=2.5.5"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "sync", "time"] }
+url = "2"
+zeroize = "=1.9.0"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.61.3", features = ["UI_Notifications", "Win32_Media_Audio"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
