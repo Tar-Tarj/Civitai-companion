@@ -14,7 +14,7 @@ import {
 import { button, element, formatDate, formatNumber, iconButton, isAllowedImageUrl, relativeTime } from "./dom";
 import { playSound } from "./audio";
 import appIcon from "./assets/icon128.png";
-import { loadCivitaiImage } from "./images";
+import { clearImageCache, loadCivitaiImage } from "./images";
 import {
   isModelUpdateNotification,
   isSubmissionUpdateNotification,
@@ -91,14 +91,9 @@ export class CompanionApp {
 
   async start(): Promise<void> {
     await backend.onStateChanged(({ snapshot, soundId }) => {
-      const refreshBuzz = completedSyncChanged(
-        this.snapshot.sync.lastSuccess,
-        snapshot.sync.lastSuccess,
-      );
-      this.snapshot = snapshot;
-      if (refreshBuzz) this.invalidateBuzzTransactions();
+      if (!this.acceptSnapshot(snapshot)) return;
       this.render();
-      if (refreshBuzz && this.view === "buzz") void this.loadBuzzTransactions(false);
+      if (this.view === "buzz") void this.loadBuzzTransactions(false);
       if (soundId) void playSound(soundId).catch(() => undefined);
     });
     window.addEventListener("resize", () => this.fitBuzzStack());
@@ -110,6 +105,22 @@ export class CompanionApp {
     this.render();
     // Once per launch; silent unless a newer release exists.
     void backend.checkForUpdate().then((version) => version && this.showUpdateCard(version)).catch(() => undefined);
+  }
+
+  private acceptSnapshot(snapshot: AppSnapshot): boolean {
+    if (snapshot.accountGeneration < this.snapshot.accountGeneration) return false;
+    const accountChanged = snapshot.accountGeneration !== this.snapshot.accountGeneration
+      || snapshot.credentialConfigured !== this.snapshot.credentialConfigured
+      || snapshot.account.userId !== this.snapshot.account.userId;
+    const refreshBuzz = completedSyncChanged(this.snapshot.sync.lastSuccess, snapshot.sync.lastSuccess);
+    this.snapshot = snapshot;
+    if (accountChanged) {
+      this.invalidateBuzzTransactions(true);
+      clearImageCache();
+    } else if (refreshBuzz) {
+      this.invalidateBuzzTransactions();
+    }
+    return true;
   }
 
   private showUpdateCard(version: string): void {
@@ -500,9 +511,10 @@ export class CompanionApp {
   }
 
   private async loadBuzzTransactions(append: boolean): Promise<void> {
+    if (!this.snapshot.credentialConfigured) return;
     const accountType = this.buzzAccountType;
     const state = this.buzzPages[accountType];
-    if (state.loading || (!append && state.loaded)) return;
+    if (state.loading || (!append && state.loaded && !state.error)) return;
     if (append && !state.nextCursor) return;
     const revision = state.revision;
     state.loading = true;
@@ -519,17 +531,21 @@ export class CompanionApp {
       state.error = this.errorMessage(error);
       state.loaded = true;
     } finally {
+      // A transition can start another request. An old response must not change
+      // that request's loading flag or schedule work for the previous account.
+      if (revision !== state.revision) return;
       state.loading = false;
       if (this.view === "buzz" && this.buzzAccountType === accountType) {
         this.render();
-        if (!state.loaded) void this.loadBuzzTransactions(false);
       }
     }
   }
 
-  private invalidateBuzzTransactions(): void {
+  private invalidateBuzzTransactions(clear = false): void {
     for (const state of Object.values(this.buzzPages)) {
       state.loaded = false;
+      state.loading = false;
+      if (clear) state.items = [];
       state.nextCursor = null;
       state.error = "";
       state.revision += 1;
@@ -1049,7 +1065,7 @@ export class CompanionApp {
     this.busy = true;
     this.render();
     try {
-      this.snapshot = await action();
+      this.acceptSnapshot(await action());
       return true;
     } catch (error) {
       this.showNotice(this.errorMessage(error), true);

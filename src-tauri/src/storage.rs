@@ -2,7 +2,7 @@ use std::{
     fs,
     io::Write,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -21,12 +21,15 @@ const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
 
 pub struct AppRuntime {
     pub data: RwLock<PersistedData>,
+    /// Account operations and credential transitions share this lock. Acquire it
+    /// before thanks_guard or data; never call synchronize while holding it.
     pub sync_guard: Mutex<()>,
     /// Serializes thanks comments so a double click cannot post twice.
     pub thanks_guard: Mutex<()>,
     pub scheduler_wakeup: Notify,
     pub image_fetch_guard: Semaphore,
     credential_configured: AtomicBool,
+    account_generation: AtomicU64,
     close_to_tray: AtomicBool,
     path: PathBuf,
 }
@@ -49,6 +52,7 @@ impl AppRuntime {
             scheduler_wakeup: Notify::new(),
             image_fetch_guard: Semaphore::new(4),
             credential_configured: AtomicBool::new(credential_configured),
+            account_generation: AtomicU64::new(0),
             close_to_tray: AtomicBool::new(close_to_tray),
             path,
         })
@@ -60,6 +64,15 @@ impl AppRuntime {
 
     pub fn credential_configured(&self) -> bool {
         self.credential_configured.load(Ordering::Relaxed)
+    }
+
+    pub fn account_generation(&self) -> u64 {
+        self.account_generation.load(Ordering::Relaxed)
+    }
+
+    /// Call while holding data's write lock so snapshots see a consistent epoch.
+    pub fn advance_account_generation(&self) {
+        self.account_generation.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn set_credential_configured(&self, configured: bool) {

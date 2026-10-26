@@ -84,6 +84,7 @@ export interface BuzzTransactionPage {
 
 export interface AppSnapshot {
   appVersion: string;
+  accountGeneration: number;
   credentialConfigured: boolean;
   account: {
     userId: number | null;

@@ -413,6 +413,7 @@ pub struct PermissionStatus {
 #[serde(rename_all = "camelCase")]
 pub struct AppSnapshot {
     pub app_version: String,
+    pub account_generation: u64,
     pub credential_configured: bool,
     pub account: Account,
     pub buzz: Buzz,
@@ -443,6 +444,7 @@ impl AppSnapshot {
     pub fn new(data: &PersistedData, credential_configured: bool) -> Self {
         Self {
             app_version: env!("CARGO_PKG_VERSION").into(),
+            account_generation: 0,
             credential_configured,
             account: data.account.clone(),
             buzz: data.buzz.clone(),

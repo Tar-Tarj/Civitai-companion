@@ -480,12 +480,7 @@ fn restrict_redirects(attempt: Attempt<'_>) -> reqwest::redirect::Action {
 }
 
 fn redirect_is_allowed(previous_count: usize, next: &Url) -> bool {
-    previous_count < 3
-        && next.scheme() == "https"
-        && next.host_str() == Some("civitai.com")
-        && next.path().starts_with("/api/")
-        && next.username().is_empty()
-        && next.password().is_none()
+    previous_count < 3 && validate_api_url(next).is_ok()
 }
 
 fn map_network_error(error: reqwest::Error) -> AppError {
@@ -1471,6 +1466,10 @@ mod tests {
 
     #[test]
     fn credentials_can_only_follow_same_origin_api_redirects() {
+        assert!(!redirect_is_allowed(
+            0,
+            &Url::parse("https://civitai.com:444/api/v1/me").unwrap()
+        ));
         assert!(redirect_is_allowed(
             0,
             &Url::parse("https://civitai.com/api/v1/me").unwrap()

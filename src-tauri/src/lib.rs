@@ -37,6 +37,13 @@ fn show_main_window(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Register first: two processes must not race over account state or
+        // independently post THANKS comments using their own in-memory locks.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|argument| argument == "--minimized") {
+                show_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(

@@ -28,7 +28,9 @@ const NATIVE_NOTIFICATION_LIFETIME: Duration = Duration::from_secs(4);
 
 pub async fn snapshot(runtime: &AppRuntime) -> AppResult<AppSnapshot> {
     let data = runtime.data.read().await;
-    Ok(AppSnapshot::new(&data, runtime.credential_configured()))
+    let mut snapshot = AppSnapshot::new(&data, runtime.credential_configured());
+    snapshot.account_generation = runtime.account_generation();
+    Ok(snapshot)
 }
 
 pub async fn emit_state(
@@ -66,6 +68,15 @@ pub async fn synchronize(
             runtime.set_credential_configured(false);
             {
                 let mut data = runtime.data.write().await;
+                // Also repair stale account caches left by an older build or an
+                // externally removed Credential Manager entry.
+                if data.account.user_id.is_some()
+                    || !data.notifications.items.is_empty()
+                    || !data.thanks_ledger.is_empty()
+                {
+                    reset_account_state(&mut data);
+                    runtime.advance_account_generation();
+                }
                 data.sync = SyncStatus {
                     last_attempt: Some(attempted_at),
                     error: Some("Configure a Civitai API key in Settings.".into()),

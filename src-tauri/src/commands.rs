@@ -51,17 +51,39 @@ async fn configure_api_key_inner(
     runtime: &AppRuntime,
     api_key: String,
 ) -> AppResult<AppSnapshot> {
+    let account_guard = runtime.sync_guard.lock().await;
+    let api_key = Zeroizing::new(api_key);
     credentials::validate(&api_key)?;
-    let client = CivitaiClient::new(Zeroizing::new(api_key))?;
-    client.get_identity().await?;
+    let client = CivitaiClient::new(Zeroizing::new(api_key.trim().to_owned()))?;
+    let identity = client.get_identity().await?;
+    if !identity.user_id.is_some_and(|id| id > 0) {
+        return Err(AppError::InvalidResponse);
+    }
     credentials::store(client.credential())?;
     runtime.set_credential_configured(true);
     {
         let mut data = runtime.data.write().await;
-        sync::reset_account_state(&mut data);
+        reset_for_identity(&mut data, identity.user_id);
+        data.account.user_id = identity.user_id;
+        data.account.username = identity.username;
+        data.account.token_scope = identity.token_scope;
+        data.account.profile_image_url = identity.profile_image_url;
+        runtime.advance_account_generation();
         runtime.persist(&data)?;
     }
+    // Publish the transition before fetching new data, including when sync fails.
+    sync::emit_state(app, runtime, None).await?;
+    drop(account_guard);
     sync::synchronize(app, runtime, "credential-updated").await
+}
+
+fn reset_for_identity(data: &mut crate::model::PersistedData, user_id: Option<i64>) {
+    let ledger = (user_id.is_some() && data.account.user_id == user_id)
+        .then(|| std::mem::take(&mut data.thanks_ledger));
+    sync::reset_account_state(data);
+    if let Some(ledger) = ledger {
+        data.thanks_ledger = ledger;
+    }
 }
 
 #[tauri::command]
@@ -73,18 +95,23 @@ pub async fn remove_api_key(
 }
 
 async fn remove_api_key_inner(app: &AppHandle, runtime: &AppRuntime) -> AppResult<AppSnapshot> {
+    let _account_guard = runtime.sync_guard.lock().await;
     credentials::remove()?;
     runtime.set_credential_configured(false);
     {
         let mut data = runtime.data.write().await;
         sync::reset_account_state(&mut data);
+        runtime.advance_account_generation();
         runtime.persist(&data)?;
     }
     sync::emit_state(app, runtime, None).await
 }
 
 #[tauri::command]
-pub async fn test_connection() -> CommandResult<ConnectionResult> {
+pub async fn test_connection(
+    runtime: State<'_, Arc<AppRuntime>>,
+) -> CommandResult<ConnectionResult> {
+    let _account_guard = runtime.sync_guard.lock().await;
     public(test_connection_inner().await)
 }
 
@@ -119,6 +146,7 @@ async fn update_settings_inner(
     runtime: &AppRuntime,
     patch: SettingsPatch,
 ) -> AppResult<AppSnapshot> {
+    let _account_guard = runtime.sync_guard.lock().await;
     let current = runtime.data.read().await.settings.clone();
     let settings = patch.apply(&current).ok_or(AppError::InvalidInput)?;
     let close_to_tray = settings.close_to_tray;
@@ -155,6 +183,7 @@ async fn mark_notification_read_inner(
     runtime: &AppRuntime,
     notification_id: String,
 ) -> AppResult<AppSnapshot> {
+    let _account_guard = runtime.sync_guard.lock().await;
     let client = CivitaiClient::new(credentials::read()?)?;
     client.mark_notification_read(&notification_id).await?;
     {
@@ -194,9 +223,13 @@ async fn send_thanks_inner(
     runtime: &AppRuntime,
     notification_id: String,
 ) -> AppResult<AppSnapshot> {
+    let _account_guard = runtime.sync_guard.lock().await;
     let _guard = runtime.thanks_guard.lock().await;
     let (image_id, user_id, username, message, key, already_thanked) = {
         let data = runtime.data.read().await;
+        if !data.settings.thanks_enabled {
+            return Err(AppError::InvalidInput);
+        }
         let item = data
             .notifications
             .items
@@ -261,6 +294,7 @@ async fn mark_all_tips_thanked_inner(
     app: &AppHandle,
     runtime: &AppRuntime,
 ) -> AppResult<AppSnapshot> {
+    let _account_guard = runtime.sync_guard.lock().await;
     let _guard = runtime.thanks_guard.lock().await;
     {
         let mut data = runtime.data.write().await;
@@ -334,6 +368,7 @@ async fn mark_all_notifications_read_inner(
     app: &AppHandle,
     runtime: &AppRuntime,
 ) -> AppResult<AppSnapshot> {
+    let _account_guard = runtime.sync_guard.lock().await;
     let client = CivitaiClient::new(credentials::read()?)?;
     client.mark_all_notifications_read().await?;
     {
@@ -361,6 +396,7 @@ async fn get_buzz_transactions_inner(
     account_type: BuzzAccountType,
     cursor: Option<String>,
 ) -> AppResult<BuzzTransactionPage> {
+    let _account_guard = runtime.sync_guard.lock().await;
     let user_id = runtime.data.read().await.account.user_id;
     let client = CivitaiClient::new(credentials::read()?)?;
     client
@@ -472,6 +508,7 @@ async fn import_preferences_inner(
     runtime: &AppRuntime,
     json: String,
 ) -> AppResult<AppSnapshot> {
+    let _account_guard = runtime.sync_guard.lock().await;
     let settings = validate_backup_json(&json)?;
     let current_autostart = runtime.data.read().await.settings.start_with_windows;
     let settings = preserve_local_autostart(settings, current_autostart);
@@ -531,14 +568,22 @@ pub async fn reset_cached_data(
 }
 
 async fn reset_cached_data_inner(app: &AppHandle, runtime: &AppRuntime) -> AppResult<AppSnapshot> {
+    let account_guard = runtime.sync_guard.lock().await;
     {
         let mut data = runtime.data.write().await;
         // The ledger prevents duplicate THANKS comments, so it survives a cache reset.
         let ledger = std::mem::take(&mut data.thanks_ledger);
+        let account_id = data.account.user_id;
         sync::reset_account_state(&mut data);
         data.thanks_ledger = ledger;
+        // Keep the ledger's owner for a later key rotation even if reload fails.
+        // Profile details and activity remain cleared with the rest of the cache.
+        data.account.user_id = account_id;
+        runtime.advance_account_generation();
         runtime.persist(&data)?;
     }
+    sync::emit_state(app, runtime, None).await?;
+    drop(account_guard);
     // The key is untouched: reload account, Buzz and notifications right away.
     sync::synchronize(app, runtime, "cache-reset").await
 }
@@ -554,6 +599,29 @@ pub async fn clear_account_data(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotating_a_key_preserves_thanks_only_for_the_verified_same_account() {
+        let mut data = crate::model::PersistedData::default();
+        data.account.user_id = Some(42);
+        data.thanks_ledger.insert(thanks_key(10, 20), now_iso());
+        data.notifications.unread_count = 7;
+        reset_for_identity(&mut data, Some(42));
+        assert!(data.thanks_ledger.contains_key(&thanks_key(10, 20)));
+        assert_eq!(data.notifications.unread_count, 0);
+
+        data.account.user_id = Some(42);
+        reset_for_identity(&mut data, Some(43));
+        assert!(data.thanks_ledger.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_identity_never_inherits_thanks_history() {
+        let mut data = crate::model::PersistedData::default();
+        data.thanks_ledger.insert(thanks_key(10, 20), now_iso());
+        reset_for_identity(&mut data, None);
+        assert!(data.thanks_ledger.is_empty());
+    }
 
     #[test]
     fn preference_export_writes_the_expected_safe_document() {
