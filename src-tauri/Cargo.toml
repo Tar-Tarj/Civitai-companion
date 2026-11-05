@@ -1,6 +1,6 @@
 [package]
 name = "civitai-companion-desktop"
-version = "1.0.27"
+version = "1.0.28"
 description = "A private, local Windows companion for Civitai"
 authors = ["Civitai Companion"]
 edition = "2024"
@@ -22,6 +22,7 @@ atomic-write-file = "=0.3.1"
 base64 = "=0.22.1"
 chrono = { version = "0.4", features = ["serde"] }
 keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

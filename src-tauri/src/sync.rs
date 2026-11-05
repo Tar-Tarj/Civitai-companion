@@ -22,7 +22,11 @@ use crate::{
 
 const RECENT_NOTIFICATION_LIMIT: usize = 30;
 const MAX_NOTIFICATION_PAGES: usize = 10;
-const MAX_MUTED_MARKS_PER_SYNC: usize = 100;
+const MAX_MUTED_MARKS_PER_SYNC: usize = 5;
+const METADATA_INTERVAL: Duration = Duration::from_secs(5 * 60);
+const THUMBNAIL_BUDGET: Duration = Duration::from_secs(4);
+const SYNC_DEADLINE: Duration = Duration::from_secs(30);
+const REFRESH_COALESCE: Duration = Duration::from_secs(5);
 const NOTIFICATION_LOOKBACK_DAYS: i64 = 5;
 const NATIVE_NOTIFICATION_LIFETIME: Duration = Duration::from_secs(4);
 
@@ -54,9 +58,14 @@ pub async fn emit_state(
 pub async fn synchronize(
     app: &AppHandle,
     runtime: &AppRuntime,
-    _reason: &'static str,
+    reason: &'static str,
 ) -> AppResult<AppSnapshot> {
     let _guard = runtime.sync_guard.lock().await;
+    // A burst of manual refreshes (F5, button, tray) right after a good sync adds nothing.
+    if matches!(reason, "manual" | "tray") && recently_synced(runtime) {
+        return snapshot(runtime).await;
+    }
+    let started = std::time::Instant::now();
     let attempted_at = now_iso();
 
     let token = match credentials::read() {
@@ -117,9 +126,17 @@ pub async fn synchronize(
     emit_state(app, runtime, None).await?;
 
     let client = CivitaiClient::new(token)?;
-    let result = perform_sync(runtime, &client).await;
+    let result = tokio::time::timeout(SYNC_DEADLINE, perform_sync(runtime, &client))
+        .await
+        .unwrap_or(Err(AppError::Timeout));
+    log_timing(app, "total", started);
     match result {
         Ok((new_items, baseline)) => {
+            *runtime
+                .last_sync_ok
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()) =
+                Some((runtime.account_generation(), std::time::Instant::now()));
             let (settings, sound_id) = {
                 let data = runtime.data.read().await;
                 (
@@ -201,20 +218,53 @@ async fn perform_sync(
     }
     // Groups switched off in Settings are marked read on the server; failures retry on the next sync.
     let mut muted_unread = 0;
+    let mut muted_failed = false;
     for item in all_items.iter_mut().filter(|item| {
         !item.public.read
             && !settings.notification_types.allows(&item.public)
             && (settings.thread_responses_enabled || item.public.kind != "new-thread-response")
     }) {
         muted_unread += 1;
-        if muted_unread <= MAX_MUTED_MARKS_PER_SYNC
-            && client.mark_notification_read(&item.public.id).await.is_ok()
-        {
-            item.public.read = true;
+        if !muted_failed && muted_unread <= MAX_MUTED_MARKS_PER_SYNC {
+            match client.mark_notification_read(&item.public.id).await {
+                Ok(()) => item.public.read = true,
+                Err(_) => muted_failed = true,
+            }
         }
     }
     apply_cached_thumbnails(&mut all_items, &previous_items);
-    client.add_thumbnails(&mut all_items).await;
+    // Only the notifications still without a picture, each at most once per METADATA_INTERVAL,
+    // and never longer than THUMBNAIL_BUDGET: a missing thumbnail must not delay the refresh.
+    let mut enrichment = {
+        let now = std::time::Instant::now();
+        let key = runtime.account_generation();
+        let mut attempts = runtime
+            .metadata_attempts
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        attempts.retain(|_, at| now.saturating_duration_since(*at) < METADATA_INTERVAL);
+        all_items
+            .iter()
+            .filter(|item| item.public.thumbnail_url.is_none())
+            .filter(|item| metadata_due(&mut attempts, format!("{key}:{}", item.public.id), now))
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    if !enrichment.is_empty() {
+        let _ =
+            tokio::time::timeout(THUMBNAIL_BUDGET, client.add_thumbnails(&mut enrichment)).await;
+        let found = enrichment
+            .into_iter()
+            .filter(|item| item.public.thumbnail_url.is_some())
+            .map(|item| (item.public.id.clone(), item.public))
+            .collect::<std::collections::HashMap<_, _>>();
+        for item in &mut all_items {
+            if let Some(media) = found.get(&item.public.id) {
+                item.public.thumbnail_url.clone_from(&media.thumbnail_url);
+                item.public.thumbnail_kind.clone_from(&media.thumbnail_kind);
+            }
+        }
+    }
 
     let baseline = !tracker.initialized;
     let new_items = if baseline {
@@ -317,6 +367,53 @@ pub async fn test_connection() -> AppResult<(String, Option<i64>)> {
     )?;
     Ok((identity.username, identity.token_scope))
 }
+
+fn recently_synced(runtime: &AppRuntime) -> bool {
+    runtime
+        .last_sync_ok
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .is_some_and(|(generation, at)| {
+            generation == runtime.account_generation() && at.elapsed() < REFRESH_COALESCE
+        })
+}
+
+fn metadata_due(
+    attempts: &mut std::collections::HashMap<String, std::time::Instant>,
+    key: String,
+    now: std::time::Instant,
+) -> bool {
+    match attempts.get(&key) {
+        Some(at) if now.saturating_duration_since(*at) < METADATA_INTERVAL => false,
+        _ => {
+            attempts.insert(key, now);
+            true
+        }
+    }
+}
+
+/// Timings for test builds only: appended to sync-timing.log next to the state file.
+#[cfg(feature = "test-panel")]
+fn log_timing(app: &AppHandle, label: &str, since: std::time::Instant) {
+    use std::io::Write;
+    use tauri::Manager;
+    if let Ok(dir) = app.path().app_local_data_dir()
+        && let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("sync-timing.log"))
+    {
+        let _ = writeln!(
+            file,
+            "{} {label} {} ms",
+            now_iso(),
+            since.elapsed().as_millis()
+        );
+    }
+}
+
+#[cfg(not(feature = "test-panel"))]
+fn log_timing(_app: &AppHandle, _label: &str, _since: std::time::Instant) {}
 
 /// Oldest creation time worth a toast: the server sometimes re-serves old notifications that are not in
 /// `known_ids`, so only items created since the previous successful sync (30 min of slack) count as new.
@@ -653,6 +750,24 @@ pub fn reset_account_state(data: &mut PersistedData) {
 mod tests {
     use super::*;
     use crate::model::{NotificationSounds, Settings};
+
+    #[test]
+    fn metadata_retries_wait_five_minutes_per_key() {
+        let now = std::time::Instant::now();
+        let mut attempts = std::collections::HashMap::new();
+        assert!(metadata_due(&mut attempts, "a".into(), now));
+        assert!(!metadata_due(
+            &mut attempts,
+            "a".into(),
+            now + Duration::from_secs(299)
+        ));
+        assert!(metadata_due(&mut attempts, "b".into(), now));
+        assert!(metadata_due(
+            &mut attempts,
+            "a".into(),
+            now + Duration::from_secs(300)
+        ));
+    }
 
     fn notification(id: &str, kind: &str) -> NotificationItem {
         NotificationItem {

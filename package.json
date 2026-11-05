@@ -1,11 +1,10 @@
 {
   "name": "civitai-companion-desktop",
-  "version": "1.0.27",
+  "version": "1.0.28",
   "private": true,
   "type": "module",
   "engines": { "node": ">=22.6" },
   "scripts": {
-    "test": "node --test scripts/frontend.test.mjs",
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",

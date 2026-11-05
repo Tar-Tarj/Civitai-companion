@@ -111,12 +111,17 @@ impl CivitaiClient {
         cursor: Option<&str>,
         limit: usize,
     ) -> AppResult<NotificationPage> {
-        let cursor = cursor.map(str::to_owned).unwrap_or_else(now_iso);
+        // The first page starts at "now" as a Date. Since 2026-11-04 the server hands back
+        // "<iso>|<id>" cursors, which are only valid as plain strings (no Date meta).
+        let (cursor, meta) = match cursor {
+            Some(cursor) => (cursor.to_owned(), None),
+            None => (now_iso(), Some(json!({ "cursor": ["Date"] }))),
+        };
         let payload = self
             .trpc_call(
                 "notification.getAllByUser",
                 Some(json!({ "cursor": cursor, "limit": limit.min(200), "unread": false })),
-                Some(json!({ "cursor": ["Date"] })),
+                meta,
             )
             .await?;
         let rows = payload
@@ -240,20 +245,23 @@ impl CivitaiClient {
             })
             .take(10)
             .collect::<Vec<_>>();
-        for user_id in follower_ids {
-            if let Ok(profile) = self
-                .trpc_call("user.getById", Some(json!({ "id": user_id })), None)
-                .await
-                && let Some(url) = picture_url(&profile)
-            {
-                for item in items.iter_mut().filter(|item| {
-                    integer(&item.details, "userId")
-                        .or_else(|| nested_integer(&item.details, &["actor", "id"]))
-                        == Some(user_id)
-                }) {
-                    item.public.thumbnail_url = Some(url.clone());
-                    item.public.thumbnail_kind = Some("avatar".into());
-                }
+        let profiles =
+            futures_util::future::join_all(follower_ids.iter().map(|user_id| async move {
+                self.trpc_call("user.getById", Some(json!({ "id": user_id })), None)
+                    .await
+                    .ok()
+                    .and_then(|profile| picture_url(&profile))
+            }))
+            .await;
+        for (user_id, url) in follower_ids.into_iter().zip(profiles) {
+            let Some(url) = url else { continue };
+            for item in items.iter_mut().filter(|item| {
+                integer(&item.details, "userId")
+                    .or_else(|| nested_integer(&item.details, &["actor", "id"]))
+                    == Some(user_id)
+            }) {
+                item.public.thumbnail_url = Some(url.clone());
+                item.public.thumbnail_kind = Some("avatar".into());
             }
         }
 
@@ -264,17 +272,15 @@ impl CivitaiClient {
             .collect::<Vec<_>>();
         collection_ids.sort_unstable();
         collection_ids.dedup();
-        for collection_id in collection_ids.into_iter().take(10) {
-            let Ok(url) = Url::parse(&format!("{API_BASE}/api/v1/collections/{collection_id}"))
-            else {
-                continue;
-            };
-            let Ok(payload) = self.fetch_json(url, Method::GET, None).await else {
-                continue;
-            };
-            let Some(url) = collection_cover_image_url(&payload) else {
-                continue;
-            };
+        collection_ids.truncate(10);
+        let covers = futures_util::future::join_all(collection_ids.iter().map(|id| async move {
+            let url = Url::parse(&format!("{API_BASE}/api/v1/collections/{id}")).ok()?;
+            let payload = self.fetch_json(url, Method::GET, None).await.ok()?;
+            collection_cover_image_url(&payload)
+        }))
+        .await;
+        for (collection_id, url) in collection_ids.into_iter().zip(covers) {
+            let Some(url) = url else { continue };
             for item in items
                 .iter_mut()
                 .filter(|item| notification_collection_id(item) == Some(collection_id))

@@ -27,6 +27,9 @@ pub struct AppRuntime {
     /// Serializes thanks comments so a double click cannot post twice.
     pub thanks_guard: Mutex<()>,
     pub scheduler_wakeup: Notify,
+    /// In-memory retry clock for optional metadata (thumbnails) and the last good sync, see sync.rs.
+    pub metadata_attempts: std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+    pub last_sync_ok: std::sync::Mutex<Option<(u64, std::time::Instant)>>,
     pub image_fetch_guard: Semaphore,
     credential_configured: AtomicBool,
     account_generation: AtomicU64,
@@ -50,6 +53,8 @@ impl AppRuntime {
             sync_guard: Mutex::new(()),
             thanks_guard: Mutex::new(()),
             scheduler_wakeup: Notify::new(),
+            metadata_attempts: Default::default(),
+            last_sync_ok: Default::default(),
             image_fetch_guard: Semaphore::new(4),
             credential_configured: AtomicBool::new(credential_configured),
             account_generation: AtomicU64::new(0),

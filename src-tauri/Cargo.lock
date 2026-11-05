@@ -513,11 +513,12 @@ dependencies = [
 
 [[package]]
 name = "civitai-companion-desktop"
-version = "1.0.27"
+version = "1.0.28"
 dependencies = [
  "atomic-write-file",
  "base64 0.22.1",
  "chrono",
+ "futures-util",
  "keyring",
  "reqwest 0.12.28",
  "serde",
